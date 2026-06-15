@@ -220,23 +220,25 @@ class BrowserManager:
         return self.driver
     
     def close_ad_tabs(self) -> None:
-        """Close any tabs that are not kagane.org (ad tabs)"""
+        """Close any tabs that are not kagane.to (ad tabs)"""
         if not self.driver:
             return
-        
+
+        original_window = self.driver.current_window_handle
+
+        for handle in self.driver.window_handles[:]:
+            try:
+                self.driver.switch_to.window(handle)
+                current_url = self.driver.current_url
+
+                # Close if not kagane.to
+                if 'kagane.to' not in current_url:
+                    self.driver.close()
+            except Exception:
+                pass
+
+        # Switch back to original window
         try:
-            original_window = self.driver.current_window_handle
-            
-            for handle in self.driver.window_handles:
-                if handle != original_window:
-                    self.driver.switch_to.window(handle)
-                    current_url = self.driver.current_url
-                    
-                    # Close if not kagane.org
-                    if 'kagane.org' not in current_url:
-                        self.driver.close()
-            
-            # Switch back to original window
             self.driver.switch_to.window(original_window)
         except Exception:
             pass
