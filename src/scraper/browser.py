@@ -106,17 +106,6 @@ class BrowserManager:
         except ImportError:
             pass
 
-        options = uc.ChromeOptions()
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        if headless:
-            options.add_argument(headless_flag)
-        
-        # Enable performance logs for network capture
-        if enable_network_logs:
-            options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        
         # Auto-detect Chrome version for compatibility
         chrome_version = get_chrome_version()
         
@@ -124,13 +113,38 @@ class BrowserManager:
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                if chrome_version:
-                    if attempt == 0:
-                        console.print(f"[dim]Detected Chrome version: {chrome_version}[/]")
-                    self.driver = uc.Chrome(options=options, use_subprocess=True, version_main=chrome_version, headless=headless)
+                # Recreate ChromeOptions each attempt to avoid reuse errors
+                options = uc.ChromeOptions()
+                options.add_argument('--no-sandbox')
+                options.add_argument('--disable-dev-shm-usage')
+                options.add_argument('--window-size=1920,1080')
+                if headless:
+                    options.add_argument(headless_flag)
+                
+                # Enable performance logs for network capture
+                if enable_network_logs:
+                    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+                
+                # On attempt 2, run without subprocess to bypass socket connection blocks
+                use_sub = False if attempt == 2 else True
+
+                # Attempt 0: Try detected version with subprocess
+                # Attempt 1: Try without forcing version, auto-detect (fixes new Chrome version mismatches)
+                # Attempt 2: Try without subprocess
+                if chrome_version and attempt == 0:
+                    console.print(f"[dim]Detected Chrome version: {chrome_version}[/]")
+                    self.driver = uc.Chrome(
+                        options=options,
+                        use_subprocess=use_sub,
+                        version_main=chrome_version,
+                        headless=headless
+                    )
                 else:
-                    # Let undetected-chromedriver try its own detection
-                    self.driver = uc.Chrome(options=options, use_subprocess=True, headless=headless)
+                    self.driver = uc.Chrome(
+                        options=options,
+                        use_subprocess=use_sub,
+                        headless=headless
+                    )
                 
                 # CRITICAL: Wait for browser to stabilize and switch to first handle
                 # Fixes NoSuchWindowException reported by users
@@ -145,6 +159,12 @@ class BrowserManager:
                 if attempt == max_attempts - 1:
                     console.print("[red][X] All browser initialization attempts failed.[/]")
                     raise e
+                
+                if attempt == 0 and chrome_version:
+                    console.print("[dim]Retrying without forcing Chrome version...[/]")
+                elif attempt == 1:
+                    console.print("[dim]Retrying with use_subprocess=False...[/]")
+                
                 time.sleep(2)
         
         # Track PIDs for cleanup
