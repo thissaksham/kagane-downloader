@@ -12,9 +12,15 @@
   <img src="https://img.shields.io/badge/Python-3.10+-blue?style=for-the-badge&logo=python&logoColor=white"/>
   <img src="https://img.shields.io/badge/PyQt6-QML-green?style=for-the-badge&logo=qt&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/>
+  <a href="https://github.com/Yui007/kagane-extension"><img src="https://img.shields.io/badge/Chrome_Extension-Kagane_Extension-orange?style=for-the-badge&logo=googlechrome&logoColor=white"/></a>
 </p>
 
 ---
+
+> [!TIP]
+> **Prefer a browser extension?**
+> If you want a direct download method without setting up Python, check out the [Kagane Extension](https://github.com/Yui007/kagane-extension) to download manga chapters directly from your browser!
+
 
 ## ✨ Features
 
