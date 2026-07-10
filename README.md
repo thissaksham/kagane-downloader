@@ -21,19 +21,22 @@
 > **Prefer a browser extension?**
 > If you want a direct download method without setting up Python, check out the [Kagane Extension](https://github.com/Yui007/kagane-extension) to download manga chapters directly from your browser!
 
-
 ## ✨ Features
 
-- 🖥️ **Beautiful Modern GUI** - Dark themed PyQt6 + QML interface
-- 📥 **Concurrent Downloads** - Download multiple chapters simultaneously
-- 📄 **Multiple Formats** - Save as Images, PDF, or CBZ
-- 🔄 **Smart Retry** - Automatic retry for failed image downloads
-- ⚙️ **Configurable** - Customize download settings to your preference
-- 🚀 **Headless Mode** - Run without visible browser window
+- 🖥️ **Modern Dark GUI** - PyQt6 + QML interface with chapter filtering and bulk selection
+- ⚡ **Fast API Fetch** - Series metadata loads via the Kagane API in seconds
+- 📄 **Multiple Formats** - Save as Images, PDF, or CBZ (with ComicInfo.xml metadata)
+- 🔄 **Smart Retry** - Concurrent image downloads with automatic retry
+- 🚀 **Headless Mode** - Keep the helper browser window hidden
 - 💻 **CLI Support** - Full-featured command line interface
-- 🛑 **Legacy Headless Support** - Option to use older headless engine for better compatibility
 
 ## 🚀 Installation
+
+### Windows executable (recommended)
+
+Download `KaganeDownloader.exe` from [Releases](https://github.com/thissaksham/kagane-downloader/releases) and run it — no Python setup required. Google Chrome must be installed. Settings and downloads are stored next to the exe.
+
+### From source
 
 ```bash
 # Clone the repository
@@ -51,26 +54,42 @@ pip install -r requirements.txt
 python gui/main.py
 ```
 
+Paste a series URL, press Enter, pick your chapters (the filter box helps with long series), and hit Download.
+
 ### CLI Mode
 ```bash
 python main.py
 ```
 
-### Direct Download
+### Series info without downloading
 ```bash
-python main.py download --url "https://kagane.to/series/..."
+python main.py info "https://kagane.to/series/..."
 ```
 
 ## ⚙️ Configuration
 
+Settings are saved to `config.json` (created on first run) and editable from both the GUI and CLI.
+
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `download_format` | Output format (images/pdf/cbz) | `images` |
-| `max_concurrent_chapters` | Chapters to download at once | `3` |
-| `image_load_delay` | Seconds to wait for images | `15` |
+| `download_format` | Output format (images/pdf/cbz) | `cbz` |
+| `keep_images` | Keep images after PDF/CBZ conversion | `false` |
+| `max_concurrent_images` | Parallel image downloads per chapter | `10` |
+| `image_load_delay` | Fallback wait for pages to load (seconds) | `30` |
 | `max_retries` | Retry attempts for failed images | `3` |
 | `download_directory` | Where to save downloads | `downloads` |
-| `use_legacy_headless` | Use older headless engine | `false` |
+| `headless_mode` | Hide the helper browser window | `false` |
+| `use_legacy_headless` | Use the older headless engine | `false` |
+| `enable_logs` | Verbose logging | `true` |
+
+## 🔨 Building the exe
+
+```bash
+pip install pyinstaller
+python -m PyInstaller --noconfirm --onefile --windowed --name KaganeDownloader --icon icon.ico --paths . --add-data "gui/qml;qml" --add-data "icon.ico;." --hidden-import PyQt6.QtQuick gui/main.py
+```
+
+The exe lands in `dist/`.
 
 ## 📁 Project Structure
 
@@ -81,7 +100,7 @@ kagane-downloader/
 │   ├── backend/           # Python workers
 │   └── qml/               # QML UI files
 ├── src/
-│   ├── scraper/           # Browser & scraping logic
+│   ├── scraper/           # API client & chapter downloading
 │   ├── converter/         # PDF & CBZ conversion
 │   └── utils/             # Helper utilities
 ├── main.py                # CLI entry point
@@ -90,9 +109,9 @@ kagane-downloader/
 
 ## 🛠️ Requirements
 
-- Python 3.10+
+- Python 3.10+ (or just the exe)
 - Chrome/Chromium browser
-- Dependencies: `undetected-chromedriver`, `PyQt6`, `typer`, `rich`, `pillow`, `img2pdf`
+- Dependencies: `undetected-chromedriver`, `PyQt6`, `typer`, `rich`, `pillow`, `img2pdf`, `curl_cffi`
 
 ## 📝 License
 

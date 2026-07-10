@@ -8,16 +8,23 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+# In a windowed (no-console) PyInstaller exe, stdout/stderr are None; rich and
+# print need real file objects
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 # Log uncaught exceptions to a file for better debugging on silent crashes
 def log_uncaught_exceptions(ex_cls, ex_val, ex_tb):
     error_msg = "".join(traceback.format_exception(ex_cls, ex_val, ex_tb))
     print(error_msg, file=sys.stderr)
     try:
-        log_file = Path(__file__).resolve().parent / "gui_error.log"
+        log_file = Path.cwd() / "gui_error.log"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.now()}] Uncaught Exception:\n")
             f.write(error_msg + "-" * 40 + "\n")
-    except:
+    except Exception:
         pass
 
 sys.excepthook = log_uncaught_exceptions
@@ -25,11 +32,11 @@ sys.excepthook = log_uncaught_exceptions
 # Use Basic style to avoid Windows-specific control issues
 os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 
-print("[DEBUG] Importing PyQt6 components...")
 try:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtQml import QQmlApplicationEngine
     from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QUrl
+    from PyQt6.QtGui import QIcon
 except ImportError as e:
     print(f"[ERROR] Failed to import PyQt6: {e}")
     sys.exit(1)
@@ -37,29 +44,14 @@ except ImportError as e:
 # Add parent directory to path using absolute resolve
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
-print(f"[DEBUG] Root directory: {ROOT_DIR}")
-sys.stdout.flush()
 
-print("[DEBUG] Importing gui.backend workers...")
-sys.stdout.flush()
 try:
     from gui.backend import ScraperWorker, DownloadWorker, SettingsBridge
-except Exception as e:
-    print(f"[ERROR] Failed to import gui.backend: {e}")
-    traceback.print_exc()
-    sys.exit(1)
-
-print("[DEBUG] Importing src.scraper models...")
-sys.stdout.flush()
-try:
     from src.scraper import Series, Book
 except Exception as e:
-    print(f"[ERROR] Failed to import src.scraper: {e}")
+    print(f"[ERROR] Failed to import backend: {e}")
     traceback.print_exc()
     sys.exit(1)
-
-print("[DEBUG] All imports successful.")
-sys.stdout.flush()
 
 
 class AppController(QObject):
@@ -202,47 +194,52 @@ class AppController(QObject):
 
 def main():
     """Main entry point"""
-    print("[DEBUG] Initializing QApplication...")
     app = QApplication(sys.argv)
     app.setApplicationName("Kagane Downloader")
     app.setOrganizationName("KaganeDownloader")
-    
-    # Create QML engine
-    print("[DEBUG] Initializing QQmlApplicationEngine...")
+
+    # App/window icon (bundled next to the QML when frozen)
+    base_dir = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else ROOT_DIR
+    icon_path = base_dir / "icon.ico"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     engine = QQmlApplicationEngine()
-    
+
     # Connect engine warnings to console
     def handle_qml_warnings(warnings):
         for warning in warnings:
             print(f"[QML WARNING] {warning.toString()}")
-    
+
     engine.warnings.connect(handle_qml_warnings)
-    
+
     # Create and expose controllers
-    print("[DEBUG] Setting up context properties...")
     controller = AppController()
     settings = SettingsBridge()
-    
+
     engine.rootContext().setContextProperty("appController", controller)
     engine.rootContext().setContextProperty("settings", settings)
-    
-    # Load QML
-    qml_path = Path(__file__).resolve().parent / "qml" / "main.qml"
-    print(f"[DEBUG] Loading QML from: {qml_path}")
-    
+
+    # Load QML (bundled into _MEIPASS/qml when frozen by PyInstaller)
+    if getattr(sys, "frozen", False):
+        qml_path = Path(sys._MEIPASS) / "qml" / "main.qml"
+    else:
+        qml_path = Path(__file__).resolve().parent / "qml" / "main.qml"
+
     if not qml_path.exists():
         print(f"[ERROR] QML file not found: {qml_path}")
         sys.exit(-1)
-        
+
     engine.load(QUrl.fromLocalFile(str(qml_path)))
-    
+
     if not engine.rootObjects():
         print("[ERROR] Failed to load QML: No root objects created.")
         sys.exit(-1)
-    
-    print("[DEBUG] GUI started successfully.")
+
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

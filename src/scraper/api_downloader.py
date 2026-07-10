@@ -1,9 +1,8 @@
 """
 API-based Chapter Downloader
-Captures image URLs from network requests and downloads them directly
+Captures image URLs from the reader page and downloads them directly
 """
 
-import re
 import json
 import time
 from curl_cffi import requests
@@ -13,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from .api_models import Book, Series
+from ..utils.sanitize import sanitize_filename
 
 
 @dataclass
@@ -28,15 +28,17 @@ class DownloadResult:
 class APIChapterDownloader:
     """
     Downloads chapter images using captured network URLs.
-    
+
     The approach:
     1. Open the reader page in a browser
-    2. Capture network requests to get image URLs from akari.kagane.to
+    2. Capture the image URLs (sessionStorage token store, or network logs)
     3. Download images directly using requests
     """
-    
+
     IMAGE_URL_PATTERN = "kstatic.to/api/v2/books/page/"
-    
+
+    sanitize_filename = staticmethod(sanitize_filename)
+
     def __init__(
         self,
         download_dir: Path,
@@ -48,7 +50,7 @@ class APIChapterDownloader:
         self.max_concurrent_images = max_concurrent_images
         self.max_retries = max_retries
         self.request_timeout = request_timeout
-        
+
         # Create a session for downloading
         self.session = requests.Session()
         self.session.headers.update({
@@ -56,24 +58,14 @@ class APIChapterDownloader:
             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
             "Referer": "https://kagane.to/"
         })
-    
-    @staticmethod
-    def sanitize_filename(name: str, max_length: int = 80) -> str:
-        """Sanitize a string to be safe for Windows filenames"""
-        sanitized = re.sub(r'[<>:"/\\|?*~\[\]{}]', '_', name)
-        sanitized = re.sub(r'_+', '_', sanitized)
-        sanitized = sanitized.strip(' _')
-        if len(sanitized) > max_length:
-            sanitized = sanitized[:max_length].rstrip(' _')
-        return sanitized
-    
+
     def download_image(self, url: str, output_path: Path) -> bool:
         """Download a single image with retries"""
         for attempt in range(self.max_retries):
             try:
                 response = self.session.get(url, timeout=self.request_timeout, stream=True, impersonate="chrome110")
                 response.raise_for_status()
-                
+
                 # Determine file extension from content-type or URL
                 content_type = response.headers.get('content-type', '')
                 if 'webp' in content_type:
@@ -92,23 +84,23 @@ class APIChapterDownloader:
                         ext = '.png'
                     else:
                         ext = '.webp'  # Default to webp
-                
+
                 # Update path with correct extension
                 final_path = output_path.with_suffix(ext)
-                
+
                 with open(final_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-                
+
                 return True
-                
+
             except Exception:
                 if attempt < self.max_retries - 1:
                     time.sleep(1)
                 continue
-        
+
         return False
-    
+
     def download_from_urls(
         self,
         image_urls: list[str],
@@ -116,46 +108,44 @@ class APIChapterDownloader:
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> int:
         """
-        Download images from a list of URLs.
-        
+        Download images from a list of URLs. Files are numbered by the
+        order of the list, so callers must pass URLs in page order.
+
         Args:
             image_urls: List of image URLs to download
             output_dir: Directory to save images
             progress_callback: Optional callback(current, total)
-        
+
         Returns:
             Number of successfully downloaded images
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         total = len(image_urls)
         downloaded = 0
-        
-        # Sort URLs to maintain page order
-        sorted_urls = image_urls
-        
+
         with ThreadPoolExecutor(max_workers=self.max_concurrent_images) as executor:
             futures = {}
-            
-            for idx, url in enumerate(sorted_urls, 1):
+
+            for idx, url in enumerate(image_urls, 1):
                 output_path = output_dir / f"{idx:03d}"
                 future = executor.submit(self.download_image, url, output_path)
                 futures[future] = idx
-            
+
             for future in as_completed(futures):
                 if future.result():
                     downloaded += 1
                     if progress_callback:
                         progress_callback(downloaded, total)
-        
+
         return downloaded
-    
+
     def close(self):
         """Close the session"""
         self.session.close()
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -165,47 +155,122 @@ def get_reader_url(series_id: str, book_id: str) -> str:
     return f"https://kagane.to/series/{series_id}/reader/{book_id}"
 
 
-def get_image_urls_from_browser(
+# Reader preferences that make the page preload every image (helps the fallback path)
+_PRELOAD_PREFS_JS = """
+    try {
+        const key = 'kagane-user-preferences';
+        const prefs = JSON.parse(localStorage.getItem(key) || '{}');
+        prefs.preloadPagesEnabled = true;
+        prefs.preloadMode = 'all';
+        prefs.preloadPageCount = 100;
+        prefs.readerPrefetchCount = 50;
+        prefs.readerPrefetchDistance = 50;
+        localStorage.setItem(key, JSON.stringify(prefs));
+    } catch (e) {}
+"""
+
+
+def fetch_chapter_image_urls(
     driver,
     series_id: str,
     book_id: str,
-    wait_time: int = 15
+    page_count: int = 0,
+    image_load_delay: int = 30,
+    log: Optional[Callable[[str], None]] = None
 ) -> list[str]:
     """
-    Capture image URLs from browser network logs.
-    
-    Args:
-        driver: Selenium webdriver with Network logging enabled
-        series_id: Series UUID
-        book_id: Book UUID
-        wait_time: Time to wait for images to load
-    
-    Returns:
-        List of image URLs
+    Open the reader page and return the chapter's image URLs in page order.
+
+    Fast path: read the DRM token store the reader writes to sessionStorage
+    (waits up to 30s to accommodate the Turnstile check). Fallback: scroll
+    the reader to trigger lazy loading and scrape Chrome's network logs.
     """
-    reader_url = get_reader_url(series_id, book_id)
-    
-    # Navigate to reader
-    driver.get(reader_url)
-    
-    # Wait for images to load
-    time.sleep(wait_time)
-    
-    # Get network logs
-    logs = driver.get_log("performance")
-    
-    image_urls = set()
-    
-    for entry in logs:
+    driver.get(get_reader_url(series_id, book_id))
+
+    try:
+        driver.execute_script(_PRELOAD_PREFS_JS)
+    except Exception:
+        pass
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
         try:
-            log = json.loads(entry["message"])["message"]
-            
-            if log["method"] == "Network.requestWillBeSent":
-                url = log["params"]["request"]["url"]
-                
-                if APIChapterDownloader.IMAGE_URL_PATTERN in url:
-                    image_urls.add(url)
+            tokens_json = driver.execute_script("return sessionStorage.getItem('kagane_drm_tokens');")
+            if tokens_json:
+                book_data = json.loads(tokens_json).get(f"{series_id}:{book_id}")
+                if book_data:
+                    token = book_data["token"]
+                    cache_url = book_data.get("cacheUrl", "https://kstatic.to")
+                    pages = sorted(book_data["pages"], key=lambda p: p["page_no"])
+                    return [
+                        f"{cache_url}/api/v2/books/page/{book_id}/{p['page_id']}.{p['ext']}?token={token}"
+                        for p in pages
+                    ]
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    if log:
+        log("sessionStorage empty, falling back to scroll capture")
+
+    # Scroll every page container to force the image requests
+    try:
+        count = driver.execute_script("return document.querySelectorAll('.page-container').length;") or page_count
+        for page_num in range(1, count + 1):
+            driver.execute_script(
+                "const el = document.querySelector('.page-container[data-page=\"' + arguments[0] + '\"]'); if (el) el.scrollIntoView({behavior: 'instant', block: 'center'});",
+                page_num
+            )
+            time.sleep(0.15)
+    except Exception:
+        pass
+
+    time.sleep(image_load_delay)
+
+    # ponytail: request order tracks the scroll order above but is not guaranteed
+    # page order; only the sessionStorage path is. Good enough as a last resort.
+    image_urls = []
+    for entry in driver.get_log("performance"):
+        try:
+            message = json.loads(entry["message"])["message"]
+            if message["method"] == "Network.requestWillBeSent":
+                url = message["params"]["request"]["url"]
+                if APIChapterDownloader.IMAGE_URL_PATTERN in url and url not in image_urls:
+                    image_urls.append(url)
         except (json.JSONDecodeError, KeyError):
             continue
-    
-    return list(image_urls)
+    return image_urls
+
+
+def download_chapter(
+    driver,
+    downloader: APIChapterDownloader,
+    series: Series,
+    book: Book,
+    download_dir: Path,
+    image_load_delay: int = 30,
+    log: Optional[Callable[[str], None]] = None
+) -> tuple[bool, Path, int]:
+    """
+    Download one chapter into <download_dir>/<series>/<chapter>/.
+
+    Returns (success, chapter_dir, pages_downloaded).
+    """
+    safe_title = sanitize_filename(series.title, max_length=50)
+    safe_chapter = sanitize_filename(f"Chapter_{book.chapter_no}_{book.title}", max_length=80)
+    chapter_dir = download_dir / safe_title / safe_chapter
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+
+    image_urls = fetch_chapter_image_urls(
+        driver,
+        series.series_id,
+        book.book_id,
+        page_count=book.page_count or 0,
+        image_load_delay=image_load_delay,
+        log=log
+    )
+    if not image_urls:
+        return False, chapter_dir, 0
+
+    pages = downloader.download_from_urls(image_urls, chapter_dir)
+    return pages > 0, chapter_dir, pages

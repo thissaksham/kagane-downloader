@@ -213,3 +213,7 @@ test_api.json
 test_page.jpg
 PLAN.md
 download_test.py
+
+# User-local state
+config.json
+gui_error.log

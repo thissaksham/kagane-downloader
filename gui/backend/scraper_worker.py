@@ -62,14 +62,13 @@ class ScraperWorker(QThread):
             if self._scraper:
                 try:
                     self._scraper.close()
-                except:
+                except Exception:
                     pass
     
     def stop(self):
-        """Stop the worker"""
+        """Stop the worker by closing the session; the fetch then fails fast"""
         if self._scraper:
             try:
                 self._scraper.close()
-            except:
+            except Exception:
                 pass
-        self.terminate()

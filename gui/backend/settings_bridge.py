@@ -47,16 +47,6 @@ class SettingsBridge(QObject):
         self._config.keep_images = value
         self._save()
     
-    # Max Concurrent Chapters
-    @pyqtProperty(int, notify=settingsChanged)
-    def maxConcurrentChapters(self):
-        return self._config.max_concurrent_chapters
-    
-    @maxConcurrentChapters.setter
-    def maxConcurrentChapters(self, value):
-        self._config.max_concurrent_chapters = value
-        self._save()
-    
     # Max Concurrent Images
     @pyqtProperty(int, notify=settingsChanged)
     def maxConcurrentImages(self):

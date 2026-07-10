@@ -239,30 +239,6 @@ class BrowserManager:
             return self.init_browser()
         return self.driver
     
-    def close_ad_tabs(self) -> None:
-        """Close any tabs that are not kagane.to (ad tabs)"""
-        if not self.driver:
-            return
-
-        original_window = self.driver.current_window_handle
-
-        for handle in self.driver.window_handles[:]:
-            try:
-                self.driver.switch_to.window(handle)
-                current_url = self.driver.current_url
-
-                # Close if not kagane.to
-                if 'kagane.to' not in current_url:
-                    self.driver.close()
-            except Exception:
-                pass
-
-        # Switch back to original window
-        try:
-            self.driver.switch_to.window(original_window)
-        except Exception:
-            pass
-    
     def __enter__(self):
         """Context manager entry"""
         self.init_browser()

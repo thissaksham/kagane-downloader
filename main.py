@@ -25,7 +25,7 @@ console = Console()
 
 # App metadata
 APP_NAME = "Kagane Downloader"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 # Create Typer app
 app = typer.Typer(
@@ -70,13 +70,12 @@ def display_main_menu() -> int:
     
     console.print(Panel(table, title="[bold cyan]Main Menu[/]", border_style="cyan"))
     
-    while True:
-        choice = Prompt.ask(
-            "[bold yellow]Select option[/]",
-            choices=["1", "2", "3"],
-            default="1"
-        )
-        return int(choice)
+    choice = Prompt.ask(
+        "[bold yellow]Select option[/]",
+        choices=["1", "2", "3"],
+        default="1"
+    )
+    return int(choice)
 
 
 def display_series_info(series: Series):
@@ -200,70 +199,68 @@ def get_book_selection(books: list[Book]) -> list[Book]:
 def download_manga_flow():
     """Main flow for downloading manga using API"""
     console.print()
-    
+
     url = Prompt.ask(
         "[bold cyan]Enter manga URL or series ID[/]",
         default=""
     )
-    
+
     if not url:
         console.print("[red]Invalid URL. Please enter a kagane.to manga URL or series ID.[/]")
         return
-    
+
     config = get_config()
-    
+    scraper = None
+
     try:
         # Fetch series info using API (much faster!)
         with console.status("[bold cyan]Fetching series information via API...[/]", spinner="dots"):
             scraper = KaganeScraper()
             series = scraper.get_series(url)
-        
+
         if not series.title:
             console.print("[red][X] Failed to load series information[/]")
             return
-        
+
         console.print("[green][OK][/] Series loaded successfully")
         console.print()
-        
+
         # Display series info
         display_series_info(series)
-        
+
         if not series.series_books:
             console.print("[red]No chapters found![/]")
             return
-        
+
         # Display chapters
         console.print()
         display_books(series.series_books, config.max_display_chapters)
-        
+
         # Get chapter selection
         selected = get_book_selection(series.series_books)
-        
+
         if not selected:
             console.print("[yellow]Download cancelled.[/]")
             return
-        
+
         console.print(f"\n[cyan]Selected {len(selected)} chapter(s) for download[/]")
-        
+
         # Show selected chapters info
         console.print("\n[bold]Selected Chapters:[/]")
         for book in selected[:5]:  # Show first 5
             console.print(f"  - Ch. {book.chapter_no}: {book.title} ({book.page_count} pages)")
         if len(selected) > 5:
             console.print(f"  ... and {len(selected) - 5} more")
-        
+
         console.print()
-        
+
         if not Confirm.ask("[bold yellow]Proceed with download?[/]", default=True):
             console.print("[yellow]Download cancelled.[/]")
-            scraper.close()
             return
-        
+
         # Download chapters
         download_chapters_api(series, selected, config)
-        
-        scraper.close()
-        
+
     except ValueError as e:
         console.print(f"[red]Error: {e}[/]")
     except Exception as e:
@@ -271,39 +268,38 @@ def download_manga_flow():
             console.print(f"[red]Error: {e}[/]")
         else:
             console.print("[red]An error occurred. Enable logs in settings for details.[/]")
+    finally:
+        if scraper:
+            scraper.close()
 
 
 def download_chapters_api(series: Series, books: list[Book], config: Config):
-    """Download chapters using API-based approach (sequential with browser restart per chapter)"""
-    import json
-    import time
-    from src.scraper import BrowserManager, APIChapterDownloader, get_reader_url
+    """Download chapters sequentially, reusing one browser for all of them"""
+    from src.scraper import BrowserManager, APIChapterDownloader, download_chapter
     from src.converter import create_pdf, create_cbz
-    
+
     download_dir = Path(config.download_directory)
     download_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create downloader
+
     downloader = APIChapterDownloader(
         download_dir=download_dir,
         max_concurrent_images=config.max_concurrent_images,
         max_retries=config.max_retries
     )
-    
+
+    log = (lambda msg: console.print(f"[dim]{msg}[/]")) if config.enable_logs else None
     results = []
-    
     browser = None
-    driver = None
     try:
         # Initialize browser once for all chapters to avoid 25-30s startup / Cloudflare delay per chapter
         try:
             browser = BrowserManager()
-            browser.init_browser(headless=config.headless_mode, enable_network_logs=True)
-            driver = browser.get_driver()
+            driver = browser.init_browser(headless=config.headless_mode, enable_network_logs=True)
         except Exception as e:
-            if config.enable_logs:
-                console.print(f"[red]Failed to initialize browser: {e}[/]")
-                
+            console.print(f"[red]Failed to initialize browser: {e}[/]")
+            downloader.close()
+            return
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -315,126 +311,28 @@ def download_chapters_api(series: Series, books: list[Book], config: Config):
                 f"[cyan]Downloading {len(books)} chapter(s)...",
                 total=len(books)
             )
-            
-            for idx, book in enumerate(books):
-                progress.update(overall_task, description=f"[cyan]Loading Chapter {book.chapter_no}...")
-                
-                # Create chapter directory
-                safe_title = downloader.sanitize_filename(series.title, max_length=50)
-                safe_chapter = downloader.sanitize_filename(f"Chapter_{book.chapter_no}_{book.title}", max_length=80)
-                chapter_dir = download_dir / safe_title / safe_chapter
-                chapter_dir.mkdir(parents=True, exist_ok=True)
-                
-                if not driver:
-                    results.append((book, False, chapter_dir, 0))
-                    progress.update(overall_task, completed=idx + 1)
-                    continue
-                
-                try:
-                    # Navigate directly to reader page
-                    reader_url = get_reader_url(series.series_id, book.book_id)
-                    driver.get(reader_url)
-                    
-                    # Set localStorage preferences directly on reader page for preloading (for subsequent pages / fallback)
-                    try:
-                        driver.execute_script("""
-                            try {
-                                const key = 'kagane-user-preferences';
-                                const prefs = JSON.parse(localStorage.getItem(key) || '{}');
-                                prefs.preloadPagesEnabled = true;
-                                prefs.preloadMode = 'all';
-                                prefs.preloadPageCount = 100;
-                                prefs.readerPrefetchCount = 50;
-                                prefs.readerPrefetchDistance = 50;
-                                localStorage.setItem(key, JSON.stringify(prefs));
-                            } catch (e) {}
-                        """)
-                    except Exception:
-                        pass
 
-                    image_urls = []
-                    
-                    # Try to extract URLs directly from sessionStorage (extremely fast and ordered)
-                    start_time = time.time()
-                    while time.time() - start_time < 30:  # 30 seconds max wait to accommodate Turnstile bypass
-                        try:
-                            tokens_json = driver.execute_script("return sessionStorage.getItem('kagane_drm_tokens');")
-                            if tokens_json:
-                                tokens_data = json.loads(tokens_json)
-                                key = f"{series.series_id}:{book.book_id}"
-                                if key in tokens_data:
-                                    book_data = tokens_data[key]
-                                    token = book_data["token"]
-                                    cache_url = book_data.get("cacheUrl", "https://kstatic.to")
-                                    pages = book_data["pages"]
-                                    
-                                    # Construct all URLs directly in proper order
-                                    for p in sorted(pages, key=lambda x: x["page_no"]):
-                                        page_id = p["page_id"]
-                                        ext = p["ext"]
-                                        url = f"{cache_url}/api/v2/books/page/{book.book_id}/{page_id}.{ext}?token={token}"
-                                        image_urls.append(url)
-                                    break
-                        except Exception:
-                            pass
-                        time.sleep(0.5)
-                    
-                    # Fallback to scrolling and network logs if sessionStorage is unavailable
-                    if not image_urls:
-                        if config.enable_logs:
-                            console.print("[yellow][!] sessionStorage empty or failed. Falling back to scroll loop...[/]")
-                            
-                        # Scroll loop to trigger lazy loading
-                        try:
-                            page_count = driver.execute_script("return document.querySelectorAll('.page-container').length;") or book.page_count
-                            for page_num in range(1, page_count + 1):
-                                driver.execute_script(
-                                    "const el = document.querySelector('.page-container[data-page=\"' + arguments[0] + '\"]'); if (el) el.scrollIntoView({behavior: 'instant', block: 'center'});",
-                                    page_num
-                                )
-                                time.sleep(0.15)  # slightly slower to ensure requests trigger
-                        except Exception:
-                            pass
-                            
-                        time.sleep(config.image_load_delay)
-                        
-                        logs = driver.get_log("performance")
-                        for entry in logs:
-                            try:
-                                log = json.loads(entry["message"])["message"]
-                                if log["method"] == "Network.requestWillBeSent":
-                                    url = log["params"]["request"]["url"]
-                                    if "kstatic.to/api/v2/books/page/" in url:
-                                        if url not in image_urls:
-                                            image_urls.append(url)
-                            except (json.JSONDecodeError, KeyError):
-                                continue
-                    
-                    if not image_urls:
-                        results.append((book, False, chapter_dir, 0))
-                        progress.update(overall_task, completed=idx + 1)
-                        continue
-                    
-                    progress.update(overall_task, description=f"[cyan]Ch.{book.chapter_no}: Downloading {len(image_urls)} images...")
-                    
-                    # Download images
-                    pages_downloaded = downloader.download_from_urls(image_urls, chapter_dir)
-                    
-                    success = pages_downloaded > 0
-                    results.append((book, success, chapter_dir, pages_downloaded))
-                    
+            for idx, book in enumerate(books):
+                progress.update(overall_task, description=f"[cyan]Downloading Chapter {book.chapter_no}...")
+
+                try:
+                    success, chapter_dir, pages = download_chapter(
+                        driver, downloader, series, book, download_dir,
+                        image_load_delay=config.image_load_delay, log=log
+                    )
                 except Exception as e:
                     if config.enable_logs:
                         console.print(f"[red]Error downloading Ch.{book.chapter_no}: {e}[/]")
-                    results.append((book, False, chapter_dir, 0))
-                
+                    success, chapter_dir, pages = False, None, 0
+
+                results.append((book, success, chapter_dir, pages))
                 progress.update(overall_task, completed=idx + 1)
     finally:
         # Close browser once at the end of all downloads
         if browser:
             try:
                 browser.close_browser()
-            except:
+            except Exception:
                 pass
     
     # Convert files if needed
@@ -494,21 +392,20 @@ def settings_menu():
         table.add_row("3. Max Display Chapters", "All" if config.max_display_chapters == 0 else str(config.max_display_chapters))
         table.add_row("4. Download Directory", config.download_directory)
         table.add_row("5. Enable Logs", "Yes" if config.enable_logs else "No")
-        table.add_row("6. Max Concurrent Chapter Downloads", str(config.max_concurrent_chapters))
-        table.add_row("7. Max Concurrent Image Downloads", str(config.max_concurrent_images))
-        table.add_row("8. Page Load Delay (seconds)", str(config.image_load_delay))
-        table.add_row("9. Headless Mode", "Yes" if config.headless_mode else "No")
-        table.add_row("10. Use Legacy Headless", "Yes" if config.use_legacy_headless else "No")
-        table.add_row("11. Back to Main Menu", "-")
-        
+        table.add_row("6. Max Concurrent Image Downloads", str(config.max_concurrent_images))
+        table.add_row("7. Page Load Delay (seconds)", str(config.image_load_delay))
+        table.add_row("8. Headless Mode", "Yes" if config.headless_mode else "No")
+        table.add_row("9. Use Legacy Headless", "Yes" if config.use_legacy_headless else "No")
+        table.add_row("10. Back to Main Menu", "-")
+
         console.print(table)
-        
+
         choice = Prompt.ask(
             "[bold yellow]Select setting to modify[/]",
-            choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
-            default="11"
+            choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+            default="10"
         )
-        
+
         if choice == "1":
             format_choice = Prompt.ask(
                 "[cyan]Download format[/]",
@@ -516,51 +413,45 @@ def settings_menu():
                 default=config.download_format
             )
             config.download_format = format_choice  # type: ignore
-            
+
         elif choice == "2":
             config.keep_images = Confirm.ask("[cyan]Keep images after conversion?[/]", default=config.keep_images)
-            
+
         elif choice == "3":
             display_val = IntPrompt.ask(
                 "[cyan]Max chapters to display (0 = show all)[/]",
                 default=config.max_display_chapters
             )
             config.max_display_chapters = max(0, display_val)
-            
+
         elif choice == "4":
             config.download_directory = Prompt.ask(
                 "[cyan]Download directory[/]",
                 default=config.download_directory
             )
-            
+
         elif choice == "5":
             config.enable_logs = Confirm.ask("[cyan]Enable logs?[/]", default=config.enable_logs)
-        
+
         elif choice == "6":
-            config.max_concurrent_chapters = IntPrompt.ask(
-                "[cyan]Max concurrent chapter downloads[/]",
-                default=config.max_concurrent_chapters
-            )
-        
-        elif choice == "7":
-            config.max_concurrent_images = IntPrompt.ask(
+            config.max_concurrent_images = max(1, IntPrompt.ask(
                 "[cyan]Max concurrent image downloads per chapter[/]",
                 default=config.max_concurrent_images
-            )
-        
-        elif choice == "8":
-            config.image_load_delay = IntPrompt.ask(
+            ))
+
+        elif choice == "7":
+            config.image_load_delay = max(1, IntPrompt.ask(
                 "[cyan]Page load delay in seconds (time to wait for images to load)[/]",
                 default=config.image_load_delay
-            )
-        
-        elif choice == "9":
+            ))
+
+        elif choice == "8":
             config.headless_mode = Confirm.ask("[cyan]Run browser in headless mode (hidden)?[/]", default=config.headless_mode)
 
-        elif choice == "10":
+        elif choice == "9":
             config.use_legacy_headless = Confirm.ask("[cyan]Use legacy headless mode (--headless)?[/]", default=config.use_legacy_headless)
 
-        elif choice == "11":
+        elif choice == "10":
             save_config(config)
             console.print("[green][OK] Settings saved![/]")
             break
