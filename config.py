@@ -31,16 +31,16 @@ class Config:
     download_directory: str = "downloads"
 
     # Enable/disable logging
-    enable_logs: bool = True
+    enable_logs: bool = False
 
     # Seconds to wait for pages to load (fallback capture path only)
-    image_load_delay: int = 30
+    image_load_delay: int = 60
 
     # Max retries for failed image downloads
-    max_retries: int = 3
+    max_retries: int = 5
 
     # Run browser in headless mode (hidden) or visible
-    headless_mode: bool = False
+    headless_mode: bool = True
 
     # Use legacy headless mode (--headless) instead of new (--headless=new)
     use_legacy_headless: bool = False

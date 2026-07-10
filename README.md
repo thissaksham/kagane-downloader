@@ -75,12 +75,12 @@ Settings are saved to `config.json` (created on first run) and editable from bot
 | `download_format` | Output format (images/pdf/cbz) | `cbz` |
 | `keep_images` | Keep images after PDF/CBZ conversion | `false` |
 | `max_concurrent_images` | Parallel image downloads per chapter | `10` |
-| `image_load_delay` | Fallback wait for pages to load (seconds) | `30` |
-| `max_retries` | Retry attempts for failed images | `3` |
+| `image_load_delay` | Fallback wait for pages to load (seconds) | `60` |
+| `max_retries` | Retry attempts for failed images | `5` |
 | `download_directory` | Where to save downloads | `downloads` |
-| `headless_mode` | Hide the helper browser window | `false` |
+| `headless_mode` | Hide the helper browser window | `true` |
 | `use_legacy_headless` | Use the older headless engine | `false` |
-| `enable_logs` | Verbose logging | `true` |
+| `enable_logs` | Verbose logging | `false` |
 
 ## 🔨 Building the exe
 
