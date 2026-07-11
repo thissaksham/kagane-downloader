@@ -317,7 +317,6 @@ ApplicationWindow {
 
     // Shift-click range selection anchor (index into the visible chapterModel)
     property int lastChapterClickIndex: -1
-    property bool lastChapterClickState: true
 
     // ---- Toast notifications ----
     property string toastText: ""
@@ -966,7 +965,6 @@ ApplicationWindow {
                                         onToggled: {
                                             setChapterSelected(model.bookIndex, index, checked)
                                             lastChapterClickIndex = index
-                                            lastChapterClickState = checked
                                         }
 
                                         indicator: Rectangle {
@@ -1025,14 +1023,14 @@ ApplicationWindow {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: (mouse) => {
+                                        // Shift-click always SELECTS the range; deselecting stays
+                                        // per-chapter or via Deselect All (predictable beats clever)
                                         if ((mouse.modifiers & Qt.ShiftModifier)
                                             && lastChapterClickIndex >= 0
                                             && lastChapterClickIndex < chapterModel.count) {
-                                            selectChapterRange(lastChapterClickIndex, index, lastChapterClickState)
+                                            selectChapterRange(lastChapterClickIndex, index, true)
                                         } else {
-                                            var newState = !model.selected
-                                            setChapterSelected(model.bookIndex, index, newState)
-                                            lastChapterClickState = newState
+                                            setChapterSelected(model.bookIndex, index, !model.selected)
                                         }
                                         lastChapterClickIndex = index
                                     }
