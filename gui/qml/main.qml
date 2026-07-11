@@ -307,6 +307,10 @@ ApplicationWindow {
     property int selectedCount: 0
     property string chapterFilter: ""
 
+    // Shift-click range selection anchor (index into the visible chapterModel)
+    property int lastChapterClickIndex: -1
+    property bool lastChapterClickState: true
+
     // ---- Toast notifications ----
     property string toastText: ""
     property string toastKind: "info"  // info | success | warning | error
@@ -329,6 +333,7 @@ ApplicationWindow {
 
     function applyChapterFilter() {
         chapterModel.clear()
+        lastChapterClickIndex = -1
         var q = chapterFilter.toLowerCase()
         for (var i = 0; i < chaptersList.length; i++) {
             var c = chaptersList[i]
@@ -337,6 +342,22 @@ ApplicationWindow {
                 || String(c.title).toLowerCase().indexOf(q) >= 0)
                 chapterModel.append(c)
         }
+    }
+
+    function selectChapterRange(fromIndex, toIndex, state) {
+        var lo = Math.max(0, Math.min(fromIndex, toIndex))
+        var hi = Math.min(chapterModel.count - 1, Math.max(fromIndex, toIndex))
+        for (var i = lo; i <= hi; i++) {
+            var bi = chapterModel.get(i).bookIndex
+            for (var j = 0; j < chaptersList.length; j++) {
+                if (chaptersList[j].bookIndex === bi) {
+                    chaptersList[j].selected = state
+                    break
+                }
+            }
+            chapterModel.setProperty(i, "selected", state)
+        }
+        recountSelected()
     }
 
     function setChapterSelected(bookIndex, modelIndex, sel) {
@@ -878,6 +899,10 @@ ApplicationWindow {
                             }
                         }
 
+                        HelperText {
+                            text: "Tip: click a chapter, then Shift-click another to select the whole range."
+                        }
+
                         ListView {
                             id: chapterListView
                             Layout.fillWidth: true
@@ -917,7 +942,11 @@ ApplicationWindow {
                                     CheckBox {
                                         id: chapterCheck
                                         checked: model.selected
-                                        onToggled: setChapterSelected(model.bookIndex, index, checked)
+                                        onToggled: {
+                                            setChapterSelected(model.bookIndex, index, checked)
+                                            lastChapterClickIndex = index
+                                            lastChapterClickState = checked
+                                        }
 
                                         indicator: Rectangle {
                                             implicitWidth: 20
@@ -974,7 +1003,18 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: setChapterSelected(model.bookIndex, index, !model.selected)
+                                    onClicked: (mouse) => {
+                                        if ((mouse.modifiers & Qt.ShiftModifier)
+                                            && lastChapterClickIndex >= 0
+                                            && lastChapterClickIndex < chapterModel.count) {
+                                            selectChapterRange(lastChapterClickIndex, index, lastChapterClickState)
+                                        } else {
+                                            var newState = !model.selected
+                                            setChapterSelected(model.bookIndex, index, newState)
+                                            lastChapterClickState = newState
+                                        }
+                                        lastChapterClickIndex = index
+                                    }
                                 }
                             }
                         }
