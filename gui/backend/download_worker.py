@@ -14,7 +14,7 @@ from config import get_config
 from src.scraper import Series, Book
 from src.scraper.api_downloader import APIChapterDownloader, download_chapter
 from src.scraper.browser import BrowserManager
-from src.converter import create_pdf, create_cbz
+from src.converter import convert_chapter
 
 
 class DownloadWorker(QThread):
@@ -22,6 +22,7 @@ class DownloadWorker(QThread):
 
     # Signals
     progress = pyqtSignal(int, int, str)  # current, total, message
+    pageProgress = pyqtSignal(int, int)  # pages_done, pages_total (within current chapter)
     chapterComplete = pyqtSignal(str, bool)  # chapter_number, success
     finished = pyqtSignal(int, int)  # success_count, total_count
     error = pyqtSignal(str)
@@ -57,6 +58,8 @@ class DownloadWorker(QThread):
                     self.error.emit(f"Failed to initialize browser: {e}")
                     return
 
+                should_stop = lambda: self._stop_requested
+
                 for idx, book in enumerate(self.chapters):
                     if self._stop_requested:
                         break
@@ -66,10 +69,22 @@ class DownloadWorker(QThread):
                     try:
                         success, chapter_dir, pages = download_chapter(
                             driver, downloader, self.series, book, download_dir,
-                            image_load_delay=config.image_load_delay
+                            image_load_delay=config.image_load_delay,
+                            should_stop=should_stop,
+                            page_progress=lambda done, total: self.pageProgress.emit(done, total)
                         )
                     except Exception:
                         success, chapter_dir, pages = False, None, 0
+
+                    # Convert immediately so finished chapters are usable right away
+                    if success and config.download_format in ("pdf", "cbz"):
+                        self.progress.emit(idx, len(self.chapters), f"Converting Chapter {book.chapter_no} to {config.download_format.upper()}...")
+                        try:
+                            convert_chapter(chapter_dir, config.download_format,
+                                            series=self.series, book=book,
+                                            keep_images=config.keep_images)
+                        except Exception:
+                            pass  # Conversion error, keep the images
 
                     results.append((book, success, chapter_dir, pages))
                     self.chapterComplete.emit(book.chapter_no, success)
@@ -80,21 +95,6 @@ class DownloadWorker(QThread):
                         browser.close_browser()
                     except Exception:
                         pass
-
-            # Convert files if needed
-            if config.download_format in ("pdf", "cbz") and not self._stop_requested:
-                self.progress.emit(len(self.chapters), len(self.chapters), f"Converting to {config.download_format.upper()}...")
-                for book, success, chapter_dir, _ in results:
-                    if self._stop_requested:
-                        break
-                    if success and chapter_dir and chapter_dir.exists():
-                        try:
-                            if config.download_format == "pdf":
-                                create_pdf(chapter_dir, delete_images=not config.keep_images)
-                            elif config.download_format == "cbz":
-                                create_cbz(chapter_dir, series=self.series, book=book, delete_images=not config.keep_images)
-                        except Exception:
-                            pass  # Conversion error, continue
 
             success_count = sum(1 for _, success, _, _ in results if success)
             downloader.close()

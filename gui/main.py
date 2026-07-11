@@ -68,6 +68,7 @@ class AppController(QObject):
     
     downloadStarted = pyqtSignal()
     downloadProgress = pyqtSignal(int, int, str)  # current, total, message
+    downloadPageProgress = pyqtSignal(int, int)  # pages done, pages total (current chapter)
     downloadChapterComplete = pyqtSignal(str, bool)  # chapter_number, success
     downloadFinished = pyqtSignal(int, int)  # success, total
     downloadError = pyqtSignal(str)
@@ -162,7 +163,10 @@ class AppController(QObject):
             
             if 0 <= idx < len(self._books):
                 normalized_indices.append(idx)
-        
+
+        # Always download in reading order, regardless of the UI sort direction
+        normalized_indices.sort()
+
         # Get selected chapters
         selected = [self._books[i] for i in normalized_indices]
         
@@ -174,6 +178,7 @@ class AppController(QObject):
         
         self._download_worker = DownloadWorker(self._current_series, selected)
         self._download_worker.progress.connect(lambda c, t, m: self.downloadProgress.emit(c, t, m))
+        self._download_worker.pageProgress.connect(lambda c, t: self.downloadPageProgress.emit(c, t))
         self._download_worker.chapterComplete.connect(lambda n, s: self.downloadChapterComplete.emit(n, s))
         self._download_worker.finished.connect(lambda s, t: self.downloadFinished.emit(s, t))
         self._download_worker.error.connect(lambda e: self.downloadError.emit(e))

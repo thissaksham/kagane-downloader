@@ -217,3 +217,4 @@ download_test.py
 # User-local state
 config.json
 gui_error.log
+downloaded_files/

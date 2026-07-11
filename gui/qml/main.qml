@@ -292,6 +292,14 @@ ApplicationWindow {
     property string downloadProgressMsg: ""
     property int downloadCurrent: 0
     property int downloadTotal: 0
+    property int downloadPageCurrent: 0
+    property int downloadPageTotal: 0
+    property bool isCancelling: false
+
+    // Overall progress including partial progress through the current chapter
+    readonly property real downloadFraction: downloadTotal > 0
+        ? (downloadCurrent + (downloadPageTotal > 0 ? downloadPageCurrent / downloadPageTotal : 0)) / downloadTotal
+        : 0
 
     property string mangaTitle: ""
     property string mangaAuthor: ""
@@ -447,9 +455,12 @@ ApplicationWindow {
 
         function onDownloadStarted() {
             isDownloading = true
+            isCancelling = false
             downloadProgressMsg = "Starting download..."
             downloadCurrent = 0
             downloadTotal = 0
+            downloadPageCurrent = 0
+            downloadPageTotal = 0
             currentScreen = 1
         }
 
@@ -458,10 +469,19 @@ ApplicationWindow {
             downloadTotal = total
             downloadProgressMsg = msg
             statusMessage = msg
+            // New phase (next chapter / conversion): reset page counters
+            downloadPageCurrent = 0
+            downloadPageTotal = 0
+        }
+
+        function onDownloadPageProgress(current, total) {
+            downloadPageCurrent = current
+            downloadPageTotal = total
         }
 
         function onDownloadFinished(success, total) {
             isDownloading = false
+            isCancelling = false
             statusMessage = ""
             showToast("Downloaded " + success + " of " + total + " chapters",
                       success === total ? "success" : "warning")
@@ -476,6 +496,7 @@ ApplicationWindow {
 
         function onDownloadError(error) {
             isDownloading = false
+            isCancelling = false
             statusMessage = ""
             showToast(error, "error")
         }
@@ -545,7 +566,7 @@ ApplicationWindow {
                     id: progressBar
                     Layout.fillWidth: true
                     visible: isDownloading
-                    value: downloadTotal > 0 ? downloadCurrent / downloadTotal : 0
+                    value: downloadFraction
 
                     background: Rectangle {
                         implicitHeight: 6
@@ -1141,9 +1162,11 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: downloadProgressMsg
+                            text: isCancelling
+                                  ? "Cancelling - finishing the current chapter..."
+                                  : downloadProgressMsg
                             font.pixelSize: 12
-                            color: theme.textSecondary
+                            color: isCancelling ? theme.warning : theme.textSecondary
                         }
 
                         RowLayout {
@@ -1153,8 +1176,8 @@ ApplicationWindow {
                                 id: downloadProgressBar
                                 Layout.preferredWidth: 400
                                 from: 0
-                                to: Math.max(downloadTotal, 1)
-                                value: downloadCurrent
+                                to: 1
+                                value: downloadFraction
 
                                 background: Rectangle {
                                     implicitHeight: 8
@@ -1168,23 +1191,36 @@ ApplicationWindow {
                                         height: parent.height
                                         radius: 4
                                         color: theme.accent
+
+                                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                                     }
                                 }
                             }
 
                             Text {
-                                text: downloadCurrent + " / " + downloadTotal
+                                text: "Chapter " + Math.min(downloadCurrent + 1, downloadTotal) + " of " + downloadTotal
                                 font.pixelSize: 12
                                 color: theme.accent
                                 font.bold: true
                             }
+
+                            Text {
+                                visible: downloadPageTotal > 0
+                                text: downloadPageCurrent + " / " + downloadPageTotal + " pages"
+                                font.pixelSize: 12
+                                color: theme.textSecondary
+                            }
                         }
 
                         OutlineButton {
-                            text: "Cancel"
+                            text: isCancelling ? "Cancelling..." : "Cancel"
                             iconName: "x"
                             tintColor: theme.danger
-                            onClicked: appController.stopDownload()
+                            enabled: !isCancelling
+                            onClicked: {
+                                isCancelling = true
+                                appController.stopDownload()
+                            }
                         }
                     }
 

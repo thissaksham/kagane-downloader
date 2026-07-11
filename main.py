@@ -276,7 +276,7 @@ def download_manga_flow():
 def download_chapters_api(series: Series, books: list[Book], config: Config):
     """Download chapters sequentially, reusing one browser for all of them"""
     from src.scraper import BrowserManager, APIChapterDownloader, download_chapter
-    from src.converter import create_pdf, create_cbz
+    from src.converter import convert_chapter
 
     download_dir = Path(config.download_directory)
     download_dir.mkdir(parents=True, exist_ok=True)
@@ -315,15 +315,29 @@ def download_chapters_api(series: Series, books: list[Book], config: Config):
             for idx, book in enumerate(books):
                 progress.update(overall_task, description=f"[cyan]Downloading Chapter {book.chapter_no}...")
 
+                def on_page(done, total, _ch=book.chapter_no):
+                    progress.update(overall_task, description=f"[cyan]Ch.{_ch}: {done}/{total} pages")
+
                 try:
                     success, chapter_dir, pages = download_chapter(
                         driver, downloader, series, book, download_dir,
-                        image_load_delay=config.image_load_delay, log=log
+                        image_load_delay=config.image_load_delay, log=log,
+                        page_progress=on_page
                     )
                 except Exception as e:
                     if config.enable_logs:
                         console.print(f"[red]Error downloading Ch.{book.chapter_no}: {e}[/]")
                     success, chapter_dir, pages = False, None, 0
+
+                # Convert immediately so finished chapters are usable right away
+                if success and config.download_format in ("pdf", "cbz"):
+                    progress.update(overall_task, description=f"[cyan]Converting Ch.{book.chapter_no} to {config.download_format.upper()}...")
+                    try:
+                        convert_chapter(chapter_dir, config.download_format,
+                                        series=series, book=book, keep_images=config.keep_images)
+                    except Exception as e:
+                        if config.enable_logs:
+                            console.print(f"[red]Error converting Ch.{book.chapter_no}: {e}[/]")
 
                 results.append((book, success, chapter_dir, pages))
                 progress.update(overall_task, completed=idx + 1)
@@ -334,20 +348,6 @@ def download_chapters_api(series: Series, books: list[Book], config: Config):
                 browser.close_browser()
             except Exception:
                 pass
-    
-    # Convert files if needed
-    if config.download_format in ("pdf", "cbz"):
-        with console.status(f"[cyan]Converting to {config.download_format.upper()}...[/]", spinner="dots"):
-            for book, success, chapter_dir, _ in results:
-                if success and chapter_dir and chapter_dir.exists():
-                    try:
-                        if config.download_format == "pdf":
-                            create_pdf(chapter_dir, delete_images=not config.keep_images)
-                        elif config.download_format == "cbz":
-                            create_cbz(chapter_dir, series=series, book=book, delete_images=not config.keep_images)
-                    except Exception as e:
-                        if config.enable_logs:
-                            console.print(f"[red]Error converting Ch.{book.chapter_no}: {e}[/]")
     
     # Display results
     console.print()

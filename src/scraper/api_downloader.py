@@ -105,7 +105,8 @@ class APIChapterDownloader:
         self,
         image_urls: list[str],
         output_dir: Path,
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None
     ) -> int:
         """
         Download images from a list of URLs. Files are numbered by the
@@ -114,7 +115,8 @@ class APIChapterDownloader:
         Args:
             image_urls: List of image URLs to download
             output_dir: Directory to save images
-            progress_callback: Optional callback(current, total)
+            progress_callback: Optional callback(done, total); called from worker threads
+            should_stop: Optional callback; when it returns True, pending downloads are cancelled
 
         Returns:
             Number of successfully downloaded images
@@ -132,6 +134,10 @@ class APIChapterDownloader:
                 futures[future] = idx
 
             for future in as_completed(futures):
+                if should_stop and should_stop():
+                    for f in futures:
+                        f.cancel()
+                    break
                 if future.result():
                     downloaded += 1
                     if progress_callback:
@@ -176,7 +182,8 @@ def fetch_chapter_image_urls(
     book_id: str,
     page_count: int = 0,
     image_load_delay: int = 30,
-    log: Optional[Callable[[str], None]] = None
+    log: Optional[Callable[[str], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None
 ) -> list[str]:
     """
     Open the reader page and return the chapter's image URLs in page order.
@@ -185,6 +192,7 @@ def fetch_chapter_image_urls(
     (waits up to 30s to accommodate the Turnstile check). Fallback: scroll
     the reader to trigger lazy loading and scrape Chrome's network logs.
     """
+    stop = should_stop or (lambda: False)
     driver.get(get_reader_url(series_id, book_id))
 
     try:
@@ -194,6 +202,8 @@ def fetch_chapter_image_urls(
 
     deadline = time.time() + 30
     while time.time() < deadline:
+        if stop():
+            return []
         try:
             tokens_json = driver.execute_script("return sessionStorage.getItem('kagane_drm_tokens');")
             if tokens_json:
@@ -217,6 +227,8 @@ def fetch_chapter_image_urls(
     try:
         count = driver.execute_script("return document.querySelectorAll('.page-container').length;") or page_count
         for page_num in range(1, count + 1):
+            if stop():
+                return []
             driver.execute_script(
                 "const el = document.querySelector('.page-container[data-page=\"' + arguments[0] + '\"]'); if (el) el.scrollIntoView({behavior: 'instant', block: 'center'});",
                 page_num
@@ -225,7 +237,12 @@ def fetch_chapter_image_urls(
     except Exception:
         pass
 
-    time.sleep(image_load_delay)
+    slept = 0.0
+    while slept < image_load_delay:
+        if stop():
+            return []
+        time.sleep(0.5)
+        slept += 0.5
 
     # ponytail: request order tracks the scroll order above but is not guaranteed
     # page order; only the sessionStorage path is. Good enough as a last resort.
@@ -249,7 +266,9 @@ def download_chapter(
     book: Book,
     download_dir: Path,
     image_load_delay: int = 30,
-    log: Optional[Callable[[str], None]] = None
+    log: Optional[Callable[[str], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    page_progress: Optional[Callable[[int, int], None]] = None
 ) -> tuple[bool, Path, int]:
     """
     Download one chapter into <download_dir>/<series>/<chapter>/.
@@ -267,10 +286,15 @@ def download_chapter(
         book.book_id,
         page_count=book.page_count or 0,
         image_load_delay=image_load_delay,
-        log=log
+        log=log,
+        should_stop=should_stop
     )
-    if not image_urls:
+    if not image_urls or (should_stop and should_stop()):
         return False, chapter_dir, 0
 
-    pages = downloader.download_from_urls(image_urls, chapter_dir)
+    pages = downloader.download_from_urls(
+        image_urls, chapter_dir,
+        progress_callback=page_progress,
+        should_stop=should_stop
+    )
     return pages > 0, chapter_dir, pages
