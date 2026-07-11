@@ -39,8 +39,10 @@ class Config:
     # Max retries for failed image downloads
     max_retries: int = 5
 
-    # Run browser in headless mode (hidden) or visible
-    headless_mode: bool = True
+    # Run browser in headless mode (hidden) or visible.
+    # Off by default: Cloudflare's Turnstile check does not clear in headless
+    # Chrome, which makes every download come back empty.
+    headless_mode: bool = False
 
     # Use legacy headless mode (--headless) instead of new (--headless=new)
     use_legacy_headless: bool = False

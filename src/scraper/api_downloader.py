@@ -290,6 +290,11 @@ def download_chapter(
         should_stop=should_stop
     )
     if not image_urls or (should_stop and should_stop()):
+        # Don't leave an empty folder behind for a failed chapter
+        try:
+            chapter_dir.rmdir()
+        except OSError:
+            pass
         return False, chapter_dir, 0
 
     pages = downloader.download_from_urls(

@@ -78,7 +78,7 @@ Settings are saved to `config.json` (created on first run) and editable from bot
 | `image_load_delay` | Fallback wait for pages to load (seconds) | `60` |
 | `max_retries` | Retry attempts for failed images | `5` |
 | `download_directory` | Where to save downloads | `downloads` |
-| `headless_mode` | Hide the helper browser window | `true` |
+| `headless_mode` | Hide the helper browser window (may fail Cloudflare checks) | `false` |
 | `use_legacy_headless` | Use the older headless engine | `false` |
 | `enable_logs` | Verbose logging | `false` |
 

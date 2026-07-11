@@ -101,6 +101,14 @@ class DownloadWorker(QThread):
 
             self.finished.emit(success_count, len(self.chapters))
 
+            # Every chapter empty + hidden browser = almost certainly Cloudflare
+            # blocking headless Chrome; tell the user the actual fix
+            if results and success_count == 0 and config.headless_mode and not self._stop_requested:
+                self.error.emit(
+                    "No pages could be downloaded. Cloudflare is likely blocking the hidden browser - "
+                    "turn off 'Hide browser window (headless)' in Settings and try again."
+                )
+
         except Exception as e:
             self.error.emit(str(e))
 
